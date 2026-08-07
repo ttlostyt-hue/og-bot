@@ -1,12 +1,12 @@
 {
-  "name": "og-bot",
+  "name": "star-discord-bot",
   "version": "1.0.0",
-  "description": "OG Fortnite Discord Bot",
+  "description": "Discord bot for the Star project",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.18.0"
   }
 }
