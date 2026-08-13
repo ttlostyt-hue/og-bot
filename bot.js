@@ -14,7 +14,7 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const SERVER_URL =
   process.env.SERVER_URL ||
-  "http://145.241.253.149:3551/server-status";
+  "http://140.238.93.219:3551/server-status";
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error(
