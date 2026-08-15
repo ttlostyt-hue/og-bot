@@ -1,224 +1,136 @@
-const {
-  Client,
-  GatewayIntentBits,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-  EmbedBuilder,
-  Events
-} = require("discord.js");
+require('dotenv').config();
+const { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    PermissionFlagsBits 
+} = require('discord.js');
 
-// Read secrets/runtime variables
+// --- Configuration ---
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
-const SERVER_URL =
-  process.env.SERVER_URL ||
-  "http://140.238.93.219:3551/server-status";
+const BACKEND_URL = process.env.BACKEND_URL; // Should be http://140.238.93.219
+const BOT_API_KEY = process.env.BOT_API_KEY;
 
-if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error(
-    "Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID runtime variable."
-  );
-  process.exit(1);
-}
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-});
-
-// Define the slash commands
+// --- Command Definitions ---
 const commands = [
-  new SlashCommandBuilder()
-    .setName("ping")
-    .setDescription("Check whether the Discord bot is online"),
+    // 1. Status Command
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('Check if the Star game server is online'),
 
-  new SlashCommandBuilder()
-    .setName("status")
-    .setDescription("Check the Fortnite server status"),
-
-  new SlashCommandBuilder()
-    .setName("server")
-    .setDescription("Show information about the Fortnite server"),
-
-  new SlashCommandBuilder()
-    .setName("help")
-    .setDescription("Show the available bot commands")
+    // 2. Gift Command (Admin Only)
+    new SlashCommandBuilder()
+        .setName('gift')
+        .setDescription('Give every item in the game to a player')
+        .addStringOption(option => 
+            option.setName('username')
+                .setDescription('The Star username of the player')
+                .setRequired(true))
+        .addStringOption(option => 
+            option.setName('pack')
+                .setDescription('Which items to give')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'Everything (All Skins/Emotes/Pickaxes)', value: 'all_items' }
+                ))
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(command => command.toJSON());
 
-// Register commands in your Discord server
-async function registerCommands() {
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+// --- Interaction Handler ---
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
 
-  console.log("Registering Discord slash commands...");
+    const { commandName, options } = interaction;
 
-  await rest.put(
-    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: commands }
-  );
+    // --- LOGIC: /STATUS ---
+    if (commandName === 'status') {
+        await interaction.deferReply();
+        try {
+            const res = await fetch(`${BACKEND_URL}/server-status`);
+            const data = await res.json();
 
-  console.log("Slash commands registered successfully.");
-}
+            const statusEmbed = new EmbedBuilder()
+                .setTitle('Star Project | Server Status')
+                .setColor(data.online ? 0x00FF00 : 0xFF0000)
+                .addFields(
+                    { name: 'Status', value: data.online ? '🟢 ONLINE' : '🔴 OFFLINE', inline: true },
+                    { name: 'Players', value: `${data.players || 0}/${data.maxPlayers || 100}`, inline: true },
+                    { name: 'Version', value: data.version || '28.30', inline: true }
+                )
+                .setTimestamp();
 
-client.once(Events.ClientReady, readyClient => {
-  console.log(`Bot online as ${readyClient.user.tag}`);
-});
-
-// Handle slash commands
-client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  try {
-    if (interaction.commandName === "ping") {
-      const websocketPing = Math.round(client.ws.ping);
-
-      await interaction.reply({
-        content: `Pong! Bot latency: **${websocketPing} ms**`
-      });
-
-      return;
-    }
-
-    if (interaction.commandName === "status") {
-      // Gives the bot more time to contact the backend
-      await interaction.deferReply();
-
-      try {
-        const controller = new AbortController();
-
-        const timeout = setTimeout(() => {
-          controller.abort();
-        }, 8000);
-
-        const response = await fetch(SERVER_URL, {
-          signal: controller.signal
-        });
-
-        clearTimeout(timeout);
-
-        if (!response.ok) {
-          throw new Error(`Backend returned HTTP ${response.status}`);
+            await interaction.editReply({ embeds: [statusEmbed] });
+        } catch (error) {
+            await interaction.editReply('❌ **Error:** Could not connect to the Oracle VPS.');
         }
+    }
 
-        const data = await response.json();
+    // --- LOGIC: /GIFT ---
+    if (commandName === 'gift') {
+        const username = options.getString('username');
+        const packName = options.getString('pack');
 
-        const embed = new EmbedBuilder()
-          .setTitle("Star Server Status")
-          .setColor(data.online ? 0x22c55e : 0xef4444)
-          .addFields(
-            {
-              name: "Status",
-              value: data.online ? "Online" : "Offline",
-              inline: true
-            },
-            {
-              name: "Players",
-              value: `${data.players ?? 0}/${data.maxPlayers ?? 16}`,
-              inline: true
-            },
-            {
-              name: "Version",
-              value: String(data.version ?? "Unknown"),
-              inline: true
-            },
-            {
-              name: "Map",
-              value: String(data.map ?? "Unknown"),
-              inline: true
-            },
-            {
-              name: "Mode",
-              value: String(data.mode ?? "Unknown"),
-              inline: true
-            },
-            {
-              name: "Season",
-              value: String(data.season ?? "Unknown"),
-              inline: true
+        // Defer because fetching 10,000+ items from the API takes time
+        await interaction.deferReply();
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/internal/admin/bulk-gift`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-bot-key': BOT_API_KEY
+                },
+                body: JSON.stringify({ username, packName })
+            });
+
+            const result = await response.json();
+
+            if (result && result.success) {
+                const successEmbed = new EmbedBuilder()
+                    .setTitle('🎁 Gifting Successful!')
+                    .setDescription(`I have successfully given **${result.count.toLocaleString()} items** to **${username}**!`)
+                    .addFields({ name: 'Instruction', value: 'The player must restart their game to see the items.' })
+                    .setColor(0x5865F2)
+                    .setThumbnail(interaction.user.displayAvatarURL());
+
+                await interaction.editReply({ embeds: [successEmbed] });
+            } else {
+                const errorReason = result.error || 'The backend refused the request.';
+                await interaction.editReply(`❌ **Failed:** ${errorReason}`);
             }
-          )
-          .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
-      } catch (error) {
-        console.error("Status command failed:", error);
-
-        await interaction.editReply({
-          content:
-            "The backend could not be reached. Check that the Oracle server and port 3551 are online."
-        });
-      }
-
-      return;
+        } catch (error) {
+            console.error(error);
+            await interaction.editReply('❌ **Critical Error:** The Oracle VPS is unreachable or timed out.');
+        }
     }
-
-    if (interaction.commandName === "server") {
-      const embed = new EmbedBuilder()
-        .setTitle("Star Project")
-        .setDescription("Chapter 5 Season 1 Fortnite project")
-        .setColor(0x5865f2)
-        .addFields(
-          {
-            name: "Region",
-            value: "EU",
-            inline: true
-          },
-          {
-            name: "Backend",
-            value: "Oracle Cloud",
-            inline: true
-          },
-          {
-            name: "Version",
-            value: "28.30",
-            inline: true
-          }
-        )
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-
-    if (interaction.commandName === "help") {
-      const embed = new EmbedBuilder()
-        .setTitle("Star Bot Commands")
-        .setColor(0x3b82f6)
-        .setDescription(
-          [
-            "`/ping` — Check whether the bot is online",
-            "`/status` — Check the Fortnite server status",
-            "`/server` — Show information about the project",
-            "`/help` — Show this command list"
-          ].join("\n")
-        );
-
-      await interaction.reply({ embeds: [embed] });
-    }
-  } catch (error) {
-    console.error("Command error:", error);
-
-    const message = {
-      content: "An error occurred while running that command.",
-      ephemeral: true
-    };
-
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(message).catch(() => {});
-    } else {
-      await interaction.reply(message).catch(() => {});
-    }
-  }
 });
 
-async function startBot() {
-  try {
-    await registerCommands();
-    await client.login(TOKEN);
-  } catch (error) {
-    console.error("Failed to start bot:", error);
-    process.exit(1);
-  }
-}
+// --- Startup & Registration ---
+const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-startBot();
+(async () => {
+    try {
+        console.log('Started refreshing application (/) commands.');
+        await rest.put(
+            Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+            { body: commands },
+        );
+        console.log('Successfully reloaded application (/) commands.');
+        
+        client.login(TOKEN);
+    } catch (error) {
+        console.error('Error during startup:', error);
+    }
+})();
+
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+    console.log('Star Discord Bot is ready for use.');
+});
