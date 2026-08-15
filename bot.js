@@ -13,10 +13,24 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
-const BACKEND_URL = process.env.BACKEND_URL; // Should be http://140.238.93.219
+const BACKEND_URL = process.env.BACKEND_URL; // Set to http://132.145.34.204:3551 in Northflank
 const BOT_API_KEY = process.env.BOT_API_KEY;
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+// --- Helper: Fetch with 8s Timeout ---
+const fetchWithTimeout = async (url, options = {}, timeout = 8000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        throw error;
+    }
+};
 
 // --- Command Definitions ---
 const commands = [
@@ -53,7 +67,8 @@ client.on('interactionCreate', async (interaction) => {
     if (commandName === 'status') {
         await interaction.deferReply();
         try {
-            const res = await fetch(`${BACKEND_URL}/server-status`);
+            const res = await fetchWithTimeout(`${BACKEND_URL}/server-status`);
+            if (!res.ok) throw new Error('Backend returned non-200');
             const data = await res.json();
 
             const statusEmbed = new EmbedBuilder()
@@ -81,14 +96,24 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferReply();
 
         try {
-            const response = await fetch(`${BACKEND_URL}/internal/admin/bulk-gift`, {
+            const response = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/bulk-gift`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-bot-key': BOT_API_KEY
                 },
-                body: JSON.stringify({ username, packName })
+                // CRITICAL FIX: Added moderatorDiscordId so the backend requireAdmin middleware allows it
+                body: JSON.stringify({ 
+                    username, 
+                    packName,
+                    moderatorDiscordId: interaction.user.id 
+                })
             });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.message || 'Backend request failed');
+            }
 
             const result = await response.json();
 
@@ -107,7 +132,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         } catch (error) {
             console.error(error);
-            await interaction.editReply('❌ **Critical Error:** The Oracle VPS is unreachable or timed out.');
+            await interaction.editReply('❌ **Critical Error:** The Oracle VPS is unreachable, timed out, or rejected the request.');
         }
     }
 });
