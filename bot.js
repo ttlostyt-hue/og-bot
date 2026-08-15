@@ -13,7 +13,7 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
-const BACKEND_URL = process.env.BACKEND_URL; // Set to http://132.145.34.204:3551 in Northflank
+const BACKEND_URL = process.env.BACKEND_URL; 
 const BOT_API_KEY = process.env.BOT_API_KEY;
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -39,7 +39,16 @@ const commands = [
         .setName('status')
         .setDescription('Check if the Star game server is online'),
 
-    // 2. Gift Command (Admin Only)
+    // 2. Link Command (NEW)
+    new SlashCommandBuilder()
+        .setName('link')
+        .setDescription('Link your Discord account to your Star account')
+        .addStringOption(option => 
+            option.setName('code')
+                .setDescription('The 8-character code from the launcher')
+                .setRequired(true)),
+
+    // 3. Gift Command (Admin Only)
     new SlashCommandBuilder()
         .setName('gift')
         .setDescription('Give every item in the game to a player')
@@ -87,12 +96,44 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
+    // --- LOGIC: /LINK (NEW) ---
+    if (commandName === 'link') {
+        const code = options.getString('code');
+        
+        // Ephemeral means ONLY the user who typed the command can see the response
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const response = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/link`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-bot-key': BOT_API_KEY
+                },
+                body: JSON.stringify({ 
+                    discordId: interaction.user.id,
+                    code: code 
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                await interaction.editReply(`✅ **Success!** Your Discord account is now linked to the Star account **${result.username}**.`);
+            } else {
+                await interaction.editReply(`❌ **Failed:** ${result.message || 'Invalid, expired, or already used code.'}`);
+            }
+        } catch (error) {
+            console.error(error);
+            await interaction.editReply('❌ **Critical Error:** The Oracle VPS is unreachable or timed out.');
+        }
+    }
+
     // --- LOGIC: /GIFT ---
     if (commandName === 'gift') {
         const username = options.getString('username');
         const packName = options.getString('pack');
 
-        // Defer because fetching 10,000+ items from the API takes time
         await interaction.deferReply();
 
         try {
@@ -102,7 +143,6 @@ client.on('interactionCreate', async (interaction) => {
                     'Content-Type': 'application/json',
                     'x-bot-key': BOT_API_KEY
                 },
-                // CRITICAL FIX: Added moderatorDiscordId so the backend requireAdmin middleware allows it
                 body: JSON.stringify({ 
                     username, 
                     packName,
