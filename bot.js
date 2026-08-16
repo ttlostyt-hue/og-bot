@@ -37,13 +37,17 @@ const commands = [
     
     new SlashCommandBuilder().setName('details').setDescription('View your linked Star account details'),
 
-    new SlashCommandBuilder().setName('ban').setDescription('Ban a player (Admin Only)')
+    // UPDATED BAN COMMAND
+    new SlashCommandBuilder().setName('ban').setDescription('Ban a player from Backend & Discord (Admin Only)')
         .addStringOption(o => o.setName('username').setDescription('Star username').setRequired(true))
         .addStringOption(o => o.setName('reason').setDescription('Reason for ban').setRequired(true))
+        .addUserOption(o => o.setName('discord_user').setDescription('Optional: Also ban from Discord server'))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    new SlashCommandBuilder().setName('unban').setDescription('Unban a player (Admin Only)')
+    // UPDATED UNBAN COMMAND
+    new SlashCommandBuilder().setName('unban').setDescription('Unban a player from Backend & Discord (Admin Only)')
         .addStringOption(o => o.setName('username').setDescription('Star username').setRequired(true))
+        .addUserOption(o => o.setName('discord_user').setDescription('Optional: Also unban from Discord server'))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     new SlashCommandBuilder().setName('gift').setDescription('Give items to a username (Admin Only)')
@@ -68,14 +72,7 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const res = await fetchWithTimeout(`${BACKEND_URL}/server-status`);
             const data = await res.json();
-            const embed = new EmbedBuilder()
-                .setTitle('Star Project | Server Status')
-                .setColor(data.online ? 0x00FF00 : 0xFF0000)
-                .addFields(
-                    { name: 'Status', value: data.online ? '🟢 ONLINE' : '🔴 OFFLINE', inline: true },
-                    { name: 'Players', value: `${data.players || 0}/${data.maxPlayers || 100}`, inline: true },
-                    { name: 'Version', value: data.version || '28.30', inline: true }
-                ).setTimestamp();
+            const embed = new EmbedBuilder().setTitle('Star Project | Server Status').setColor(data.online ? 0x00FF00 : 0xFF0000).addFields({ name: 'Status', value: data.online ? '🟢 ONLINE' : '🔴 OFFLINE', inline: true }, { name: 'Players', value: `${data.players || 0}/${data.maxPlayers || 100}`, inline: true }, { name: 'Version', value: data.version || '28.30', inline: true }).setTimestamp();
             await interaction.editReply({ embeds: [embed] });
         } catch { await interaction.editReply('❌ **Error:** Could not connect to the Oracle VPS.'); }
     }
@@ -84,10 +81,7 @@ client.on('interactionCreate', async (interaction) => {
     if (commandName === 'link') {
         await interaction.deferReply({ ephemeral: true });
         try {
-            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/link`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY },
-                body: JSON.stringify({ discordId: interaction.user.id, code: options.getString('code') })
-            });
+            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/link`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY }, body: JSON.stringify({ discordId: interaction.user.id, code: options.getString('code') }) });
             const result = await res.json();
             if (res.ok && result.success) await interaction.editReply(`✅ **Success!** Linked to Star account **${result.username}**.`);
             else await interaction.editReply(`❌ **Failed:** ${result.message || 'Invalid or used code.'}`);
@@ -98,16 +92,10 @@ client.on('interactionCreate', async (interaction) => {
     if (commandName === 'exchange-code') {
         await interaction.deferReply({ ephemeral: true });
         try {
-            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/exchange-code`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY },
-                body: JSON.stringify({ discordId: interaction.user.id })
-            });
+            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/exchange-code`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY }, body: JSON.stringify({ discordId: interaction.user.id }) });
             const result = await res.json();
-            if (res.ok) {
-                await interaction.editReply(`🔑 **Your Login Code:**\n||${result.code}||\n\n*Paste this into the launcher. Expires in 5 minutes. DO NOT SHARE THIS.*`);
-            } else {
-                await interaction.editReply(`❌ **Failed:** ${result.message || 'Is your Discord linked?'}`);
-            }
+            if (res.ok) await interaction.editReply(`🔑 **Your Login Code:**\n||${result.code}||\n\n*Paste this into the launcher. Expires in 5 minutes. DO NOT SHARE THIS.*`);
+            else await interaction.editReply(`❌ **Failed:** ${result.message || 'Is your Discord linked?'}`);
         } catch { await interaction.editReply('❌ **Error:** VPS unreachable.'); }
     }
 
@@ -115,88 +103,95 @@ client.on('interactionCreate', async (interaction) => {
     if (commandName === 'details') {
         await interaction.deferReply({ ephemeral: true });
         try {
-            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/account/${interaction.user.id}`, {
-                headers: { 'x-bot-key': BOT_API_KEY }
-            });
-            if (res.status === 404) {
-                return await interaction.editReply('❌ **Not Linked:** Use `/link` to connect your Star account first.');
-            }
+            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/account/${interaction.user.id}`, { headers: { 'x-bot-key': BOT_API_KEY } });
+            if (res.status === 404) return await interaction.editReply('❌ **Not Linked:** Use `/link` to connect your Star account first.');
             const acc = await res.json();
-            const embed = new EmbedBuilder()
-                .setTitle('📊 Account Details')
-                .setColor(0x5865F2)
-                .setThumbnail(interaction.user.displayAvatarURL())
-                .addFields(
-                    { name: 'Username', value: acc.username, inline: true },
-                    { name: 'Account ID', value: acc.accountId, inline: true },
-                    { name: 'Status', value: acc.banned ? `🔴 BANNED (${acc.banReason})` : '🟢 Active', inline: false },
-                    { name: 'Items Owned', value: `${acc.items?.length || 0}`, inline: true }
-                ).setTimestamp();
+            const embed = new EmbedBuilder().setTitle('📊 Account Details').setColor(0x5865F2).setThumbnail(interaction.user.displayAvatarURL()).addFields({ name: 'Username', value: acc.username, inline: true }, { name: 'Account ID', value: acc.accountId, inline: true }, { name: 'Status', value: acc.banned ? `🔴 BANNED (${acc.banReason})` : '🟢 Active', inline: false }, { name: 'Items Owned', value: `${acc.items?.length || 0}`, inline: true }).setTimestamp();
             await interaction.editReply({ embeds: [embed] });
         } catch { await interaction.editReply('❌ **Error:** VPS unreachable.'); }
     }
 
-    // --- 5. BAN (Admin) ---
+    // --- 5. BAN (Backend + Discord) ---
     if (commandName === 'ban') {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
+        const targetUsername = options.getString('username');
+        const reason = options.getString('reason');
+        const targetDiscord = options.getUser('discord_user');
+        let replyMsg = '';
+
         try {
+            // 1. Ban from Backend
             const res = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/ban`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY },
-                body: JSON.stringify({ username: options.getString('username'), reason: options.getString('reason'), moderatorDiscordId: interaction.user.id })
+                body: JSON.stringify({ username: targetUsername, reason: reason, moderatorDiscordId: interaction.user.id })
             });
             const result = await res.json();
-            if (res.ok) await interaction.editReply(`🔨 **Banned:** ${result.message}`);
-            else await interaction.editReply(`❌ **Failed:** ${result.message}`);
-        } catch { await interaction.editReply('❌ **Error:** VPS unreachable or permission denied.'); }
+            if (res.ok) replyMsg += `🔨 **Backend Banned:** ${result.message}\n`;
+            else replyMsg += `❌ **Backend Failed:** ${result.message}\n`;
+
+            // 2. Ban from Discord (if user was tagged)
+            if (targetDiscord) {
+                try {
+                    await interaction.guild.members.ban(targetDiscord, { reason: `Star Backend Ban: ${reason}` });
+                    replyMsg += `🔨 **Discord Banned:** ${targetDiscord.tag}\n`;
+                } catch (err) { replyMsg += `❌ **Discord Ban Failed:** Bot missing permissions or user not in server.\n`; }
+            }
+            await interaction.editReply(replyMsg);
+        } catch { await interaction.editReply('❌ **Error:** VPS unreachable.'); }
     }
 
-    // --- 6. UNBAN (Admin) ---
+    // --- 6. UNBAN (Backend + Discord) ---
     if (commandName === 'unban') {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
+        const targetUsername = options.getString('username');
+        const targetDiscord = options.getUser('discord_user');
+        let replyMsg = '';
+
         try {
+            // 1. Unban from Backend
             const res = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/unban`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY },
-                body: JSON.stringify({ username: options.getString('username'), moderatorDiscordId: interaction.user.id })
+                body: JSON.stringify({ username: targetUsername, moderatorDiscordId: interaction.user.id })
             });
             const result = await res.json();
-            if (res.ok) await interaction.editReply(`✅ **Unbanned:** ${result.message}`);
-            else await interaction.editReply(`❌ **Failed:** ${result.message}`);
-        } catch { await interaction.editReply('❌ **Error:** VPS unreachable or permission denied.'); }
+            if (res.ok) replyMsg += `✅ **Backend Unbanned:** ${result.message}\n`;
+            else replyMsg += `❌ **Backend Failed:** ${result.message}\n`;
+
+            // 2. Unban from Discord (if user was tagged)
+            if (targetDiscord) {
+                try {
+                    await interaction.guild.members.unban(targetDiscord, 'Star Backend Unban');
+                    replyMsg += `✅ **Discord Unbanned:** ${targetDiscord.tag}\n`;
+                } catch (err) { replyMsg += `❌ **Discord Unban Failed:** Bot missing permissions or user not banned.\n`; }
+            }
+            await interaction.editReply(replyMsg);
+        } catch { await interaction.editReply('❌ **Error:** VPS unreachable.'); }
     }
 
     // --- 7. GIFT (Admin) ---
     if (commandName === 'gift') {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
         try {
-            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/bulk-gift`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY },
-                body: JSON.stringify({ username: options.getString('username'), packName: options.getString('pack'), moderatorDiscordId: interaction.user.id })
-            });
+            const res = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/bulk-gift`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY }, body: JSON.stringify({ username: options.getString('username'), packName: options.getString('pack'), moderatorDiscordId: interaction.user.id }) });
             const result = await res.json();
             if (res.ok && result.success) await interaction.editReply(`🎁 **Success:** Gave **${result.count.toLocaleString()} items** to **${options.getString('username')}**!`);
             else await interaction.editReply(`❌ **Failed:** ${result.message || 'User not found.'}`);
-        } catch { await interaction.editReply('❌ **Error:** VPS unreachable or permission denied.'); }
+        } catch { await interaction.editReply('❌ **Error:** VPS unreachable.'); }
     }
 
     // --- 8. GIFT-ID (Admin) ---
     if (commandName === 'gift-id') {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
         const targetId = options.getString('discord_id');
         try {
-            // First, find the username linked to this Discord ID
             const accRes = await fetchWithTimeout(`${BACKEND_URL}/internal/discord/account/${targetId}`, { headers: { 'x-bot-key': BOT_API_KEY } });
             if (accRes.status === 404) return await interaction.editReply('❌ **Failed:** That Discord ID is not linked to any Star account.');
             const acc = await accRes.json();
-
-            // Then, gift the items to that username
-            const giftRes = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/bulk-gift`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY },
-                body: JSON.stringify({ username: acc.username, packName: options.getString('pack'), moderatorDiscordId: interaction.user.id })
-            });
+            const giftRes = await fetchWithTimeout(`${BACKEND_URL}/internal/admin/bulk-gift`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bot-key': BOT_API_KEY }, body: JSON.stringify({ username: acc.username, packName: options.getString('pack'), moderatorDiscordId: interaction.user.id }) });
             const result = await giftRes.json();
             if (giftRes.ok && result.success) await interaction.editReply(`🎁 **Success:** Gave **${result.count.toLocaleString()} items** to <@${targetId}> (**${acc.username}**)!`);
             else await interaction.editReply(`❌ **Failed:** ${result.message}`);
-        } catch { await interaction.editReply('❌ **Error:** VPS unreachable or permission denied.'); }
+        } catch { await interaction.editReply('❌ **Error:** VPS unreachable.'); }
     }
 });
 
